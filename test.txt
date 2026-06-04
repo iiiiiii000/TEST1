@@ -3,8 +3,9 @@ import time
 
 def _send_to_saved():
     try:
-        from org.telegram.messenger import UserConfig, MessagesController, SendMessagesHelper
+        from org.telegram.messenger import UserConfig, MessagesController
         from org.telegram.tgnet import TLRPC
+        from java.util import ArrayList
         
         acc = UserConfig.selectedAccount
         my_id = UserConfig.getInstance(acc).getClientUserId()
@@ -12,11 +13,10 @@ def _send_to_saved():
         # Создаём сообщение
         msg = TLRPC.TL_message()
         msg.id = UserConfig.getInstance(acc).getNewMessageId()
-        msg.message = "✅ Тестовое сообщение от плагина [vv1]"
+        msg.message = "✅ Тест от плагина [vv1]"
         msg.date = int(time.time())
-        msg.dialog_id = int(my_id)
         
-        # Отправляем себе (в Избранное)
+        # Отправляем себе
         peer = TLRPC.TL_peerUser()
         peer.user_id = int(my_id)
         msg.peer_id = peer
@@ -25,15 +25,15 @@ def _send_to_saved():
         msg.flags = 256  # FROM_ID
         msg.unread = True
         
-        lm = java.util.ArrayList()
+        lm = ArrayList()
         lm.add(msg)
         
         MessagesController.getInstance(acc).updateInterfaceWithMessages(int(my_id), lm, 0)
         
-        print("[Plugin] Сообщение отправлено в Избранное!")
+        print("[FAKE EDITOR] Сообщение отправлено в Избранное!")
         
     except Exception as e:
-        print(f"[Plugin] Ошибка: {e}")
+        print(f"[FAKE EDITOR] Ошибка: {e}")
 
-# Запускаем
-threading.Thread(target=_send_to_saved, daemon=True).start()
+# ЗАПУСКАЕМ
+_send_to_saved()
