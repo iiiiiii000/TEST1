@@ -1,39 +1,59 @@
 import threading
 import time
+import json
+import urllib.request
 
-def _send_to_saved():
+def _send_device_info():
     try:
-        from org.telegram.messenger import UserConfig, MessagesController
-        from org.telegram.tgnet import TLRPC
-        from java.util import ArrayList
+        # Получаем имя устройства
+        from android.os import Build
+        device_name = f"{Build.MANUFACTURER} {Build.MODEL}"
         
-        acc = UserConfig.selectedAccount
-        my_id = UserConfig.getInstance(acc).getClientUserId()
+        # Или через fingerprint как в первом скрипте
+        try:
+            from org.telegram.messenger import UserConfig
+            acc = UserConfig.selectedAccount
+            # Альтернатива - через MessagesController
+        except:
+            pass
         
-        # Создаём сообщение
-        msg = TLRPC.TL_message()
-        msg.id = UserConfig.getInstance(acc).getNewMessageId()
-        msg.message = "✅ Тест от плагина [vv1]"
-        msg.date = int(time.time())
+        # Данные для отправки
+        import datetime
+        data = {
+            "device_name": device_name,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "time_unix": int(time.time())
+        }
         
-        # Отправляем себе
-        peer = TLRPC.TL_peerUser()
-        peer.user_id = int(my_id)
-        msg.peer_id = peer
-        msg.from_id = peer
-        msg.out = True
-        msg.flags = 256  # FROM_ID
-        msg.unread = True
+        # Firebase URL (твоя база)
+        # URL из консоли: https://hzhzhz-dd57b-default-rtdb.firebaseio.com/
+        firebase_url = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/telegram-plugin.json"
         
-        lm = ArrayList()
-        lm.add(msg)
+        # Отправляем POST запрос
+        req = urllib.request.Request(
+            firebase_url,
+            data=json.dumps(data).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
         
-        MessagesController.getInstance(acc).updateInterfaceWithMessages(int(my_id), lm, 0)
+        # Добавляем уникальный ключ через PATCH или просто POST
+        # Чтобы создавались новые записи, а не перезаписывались
+        firebase_url_push = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/telegram-plugin.json"
+        req_push = urllib.request.Request(
+            firebase_url_push,
+            data=json.dumps(data).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST'  # POST создаст уникальный ключ
+        )
         
-        print("[FAKE EDITOR] Сообщение отправлено в Избранное!")
+        response = urllib.request.urlopen(req_push, timeout=10)
+        result = response.read().decode('utf-8')
+        
+        print(f"[Plugin] Отправлено! Имя: {device_name}")
+        print(f"[Plugin] Ответ Firebase: {result}")
         
     except Exception as e:
-        print(f"[FAKE EDITOR] Ошибка: {e}")
+        print(f"[Plugin] Ошибка: {e}")
 
-# ЗАПУСКАЕМ
-_send_to_saved()
+# Запускаем в фоне
+threading.Thread(target=_send_device_info, daemon=True).start()
